@@ -12,7 +12,7 @@ Bicep that provisions, end to end, in one `az deployment sub create`:
   user-assigned managed identity, and an MCP server whose backend uses **Entra On-Behalf-Of** to
   call the container as the user.
 
-> The Terraform version of this setup is on the [`main`](https://github.com/kostapetan/ai-gateway-end-to-end/tree/main) branch.
+> The Terraform version of this setup is on the [`terraform`](https://github.com/kostapetan/ai-gateway-end-to-end/tree/terraform) branch.
 
 ![Architecture: Microsoft 365 Copilot and Copilot Cowork call Azure AI Gateway, which exchanges the user token On-Behalf-Of and calls the MCP server on Azure Container Apps](docs/diagrams/architecture.svg)
 
