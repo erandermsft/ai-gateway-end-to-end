@@ -11,10 +11,15 @@ Terraform that provisions, end to end:
   user-assigned managed identity, and an MCP server whose backend uses **Entra On-Behalf-Of** to
   call the container as the user.
 
-![Runtime flow](docs/flow-sequence.svg)
+![Architecture: Microsoft 365 Copilot and Copilot Cowork call Azure AI Gateway, which exchanges the user token On-Behalf-Of and calls the MCP server on Azure Container Apps](docs/diagrams/architecture.svg)
 
-The full walkthrough (sequence, token-by-token table, trust map, and why each piece exists) is in
-**[docs/architecture.md](docs/architecture.md)**.
+Step by step, one tool call looks like this:
+
+![Swim-lane diagram of one tool call: sign-in, MCP call, On-Behalf-Of exchange, and backend validation](docs/diagrams/obo-flow.svg)
+
+The full walkthrough (token-by-token table and why each piece exists) is in
+**[docs/architecture.md](docs/architecture.md)**. Diagram sources (`.excalidraw`) and PNGs are in
+[`docs/diagrams/`](docs/diagrams/).
 
 ## What gets created
 
@@ -188,5 +193,5 @@ infra/            Terraform root module
   scripts/          ensure-service-principal.sh, build-image.sh
 mcp-server/       FastMCP server (whoami, echo, get_server_time) + Dockerfile
 scripts/test-obo.py   End-to-end OBO verification
-docs/             architecture.md, flow-sequence.svg, trust-map.svg
+docs/             architecture.md + diagrams/ (Excalidraw sources, SVG, PNG)
 ```

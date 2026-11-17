@@ -7,3 +7,4 @@ crash.log
 .vscode/mcp.json
 __pycache__/
 .venv/
+.playwright-mcp/
