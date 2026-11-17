@@ -1,0 +1,222 @@
+// Entra ID objects for the On-Behalf-Of chain (Microsoft Graph Bicep extension):
+//   Copilot user token (aud = AI Gateway, scp = Data.All)
+//     -> AI Gateway exchanges it via the token exchange app (FederationApp.Access),
+//        authenticating as that app with its user-assigned managed identity (no secret)
+//     -> backend token (aud = MCP backend app, scp = user_impersonation, azp = token exchange app)
+//
+// Graph resources are upserted by their client-provided keys (applications: uniqueName,
+// service principals: appId) and are never deleted by a Bicep deployment.
+// Identifier URIs (api://{appId}) are set afterwards by app-identifier-uri.bicep.
+extension microsoftGraphV1
+
+param baseName string
+
+@description('Principal (object) ID of the gateway\'s user-assigned managed identity: the federated credential subject.')
+param gatewayIdentityPrincipalId string
+
+param backendScopeName string
+param enableCopilotConnector bool
+
+@description('Object ID of the owner of the app registrations (the deploying user).')
+param ownerObjectId string
+
+var tenantId = tenant().tenantId
+var aiGatewayAppId = '18550318-e177-4205-a743-6816d6fcdc3f' // Azure AI Gateway Dataplane (Microsoft first-party)
+var graphAppId = '00000003-0000-0000-c000-000000000000'
+var teamsOAuthRedirectUri = 'https://teams.microsoft.com/api/platform/v1.0/oAuthRedirect'
+var owners = { relationships: [ownerObjectId] }
+
+var backendName = '${baseName}-mcp-backend'
+var tokenExchangeName = '${baseName}-token-exchange'
+var copilotConnectorName = '${baseName}-copilot-connector'
+var backendScopeId = guid(tenantId, backendName, backendScopeName)
+var federationScopeId = guid(tenantId, tokenExchangeName, 'FederationApp.Access')
+
+// First-party service principal: created when missing, otherwise left as is.
+resource aiGatewaySp 'Microsoft.Graph/servicePrincipals@v1.0' = {
+  appId: aiGatewayAppId
+}
+
+resource graphSp 'Microsoft.Graph/servicePrincipals@v1.0' existing = {
+  appId: graphAppId
+}
+
+// ---------------------------------------------------------------------------
+// App C: MCP backend API (validates the OBO token)
+// ---------------------------------------------------------------------------
+resource backendApp 'Microsoft.Graph/applications@v1.0' = {
+  uniqueName: backendName
+  displayName: backendName
+  signInAudience: 'AzureADMyOrg'
+  owners: owners
+  api: {
+    // v2 tokens: aud = client ID (GUID), iss = login.microsoftonline.com/<tenant>/v2.0
+    requestedAccessTokenVersion: 2
+    oauth2PermissionScopes: [
+      {
+        id: backendScopeId
+        value: backendScopeName
+        type: 'User'
+        isEnabled: true
+        adminConsentDisplayName: 'Call the MCP backend as the signed-in user'
+        adminConsentDescription: 'Allows the AI Gateway token exchange app to call the MCP backend on behalf of the signed-in user.'
+        userConsentDisplayName: 'Call the MCP backend as you'
+        userConsentDescription: 'Allows the app to call the MCP backend on your behalf.'
+      }
+    ]
+  }
+}
+
+resource backendSp 'Microsoft.Graph/servicePrincipals@v1.0' = {
+  appId: backendApp.appId
+  owners: owners
+}
+
+// ---------------------------------------------------------------------------
+// App B: token exchange app (performs OBO for the gateway)
+// ---------------------------------------------------------------------------
+resource tokenExchangeApp 'Microsoft.Graph/applications@v1.0' = {
+  uniqueName: tokenExchangeName
+  displayName: tokenExchangeName
+  signInAudience: 'AzureADMyOrg'
+  owners: owners
+  api: {
+    requestedAccessTokenVersion: 2
+    oauth2PermissionScopes: [
+      {
+        id: federationScopeId
+        value: 'FederationApp.Access'
+        type: 'User'
+        isEnabled: true
+        adminConsentDisplayName: 'Exchange user tokens through Azure AI Gateway'
+        adminConsentDescription: 'Allows Azure AI Gateway to exchange the signed-in user\'s token through this app.'
+        userConsentDisplayName: 'Let Azure AI Gateway act on your behalf'
+        userConsentDescription: 'Allows Azure AI Gateway to call backend tools on your behalf.'
+      }
+    ]
+    // Azure AI Gateway may request FederationApp.Access without a consent prompt.
+    preAuthorizedApplications: [
+      {
+        appId: aiGatewaySp.appId
+        delegatedPermissionIds: [federationScopeId]
+      }
+    ]
+  }
+  // Delegated permission on the backend; consented tenant-wide below.
+  requiredResourceAccess: [
+    {
+      resourceAppId: backendApp.appId
+      resourceAccess: [
+        {
+          id: backendScopeId
+          type: 'Scope'
+        }
+      ]
+    }
+  ]
+
+  // Secretless credential: the gateway's user-assigned identity signs in as this app.
+  resource gatewayCredential 'federatedIdentityCredentials@v1.0' = {
+    name: '${tokenExchangeApp.uniqueName}/ai-gateway'
+    description: 'Azure AI Gateway user-assigned managed identity'
+    audiences: ['api://AzureADTokenExchange']
+    issuer: '${environment().authentication.loginEndpoint}${tenantId}/v2.0'
+    // Principal (object) ID of the managed identity - not its client ID.
+    subject: gatewayIdentityPrincipalId
+  }
+}
+
+resource tokenExchangeSp 'Microsoft.Graph/servicePrincipals@v1.0' = {
+  appId: tokenExchangeApp.appId
+  owners: owners
+}
+
+// Identifier URIs. Azure AI Gateway addresses the token exchange app as api://{appId}: with
+// any other URI it can't exchange the user's token, and tool calls fail with 502.
+module backendAppUri 'app-identifier-uri.bicep' = {
+  params: {
+    uniqueName: backendApp.uniqueName
+    displayName: backendApp.displayName
+    appId: backendApp.appId
+  }
+}
+
+module tokenExchangeAppUri 'app-identifier-uri.bicep' = {
+  params: {
+    uniqueName: tokenExchangeApp.uniqueName
+    displayName: tokenExchangeApp.displayName
+    appId: tokenExchangeApp.appId
+  }
+}
+
+// Tenant-wide admin consent for the OBO hop (token exchange app -> backend scope).
+resource tokenExchangeToBackend 'Microsoft.Graph/oauth2PermissionGrants@v1.0' = {
+  clientId: tokenExchangeSp.id
+  resourceId: backendSp.id
+  consentType: 'AllPrincipals'
+  scope: backendScopeName
+}
+
+// ---------------------------------------------------------------------------
+// App A: client for the Microsoft 365 Copilot / Copilot Cowork federated connector.
+// Copilot signs the user in (auth code + PKCE) for https://ai.gateway.azure.com/Data.All.
+// Graph Bicep can't create client secrets: run scripts/new-copilot-secret.sh.
+// ---------------------------------------------------------------------------
+var dataAllScopeId = filter(aiGatewaySp.oauth2PermissionScopes, s => s.value == 'Data.All')[0].id
+var graphSignInScopes = map(
+  filter(graphSp.oauth2PermissionScopes, s => contains(['openid', 'offline_access'], s.value)),
+  s => { id: s.id, type: 'Scope' }
+)
+
+resource copilotConnectorApp 'Microsoft.Graph/applications@v1.0' = if (enableCopilotConnector) {
+  uniqueName: copilotConnectorName
+  displayName: copilotConnectorName
+  signInAudience: 'AzureADMyOrg'
+  owners: owners
+  web: {
+    // OAuth 2.0 connectors use oAuthRedirect (Entra SSO connectors use oAuthConsentRedirect).
+    redirectUris: [teamsOAuthRedirectUri]
+  }
+  requiredResourceAccess: [
+    {
+      resourceAppId: aiGatewayAppId
+      resourceAccess: [
+        {
+          id: dataAllScopeId
+          type: 'Scope'
+        }
+      ]
+    }
+    {
+      // Lets Teams refresh expired tokens.
+      resourceAppId: graphAppId
+      resourceAccess: graphSignInScopes
+    }
+  ]
+}
+
+resource copilotConnectorSp 'Microsoft.Graph/servicePrincipals@v1.0' = if (enableCopilotConnector) {
+  appId: copilotConnectorApp!.appId
+  owners: owners
+}
+
+// Tenant-wide admin consent so users aren't blocked by consent prompts in Copilot.
+resource copilotConnectorToAiGateway 'Microsoft.Graph/oauth2PermissionGrants@v1.0' = if (enableCopilotConnector) {
+  clientId: copilotConnectorSp!.id
+  resourceId: aiGatewaySp.id
+  consentType: 'AllPrincipals'
+  scope: 'Data.All'
+}
+
+resource copilotConnectorToGraph 'Microsoft.Graph/oauth2PermissionGrants@v1.0' = if (enableCopilotConnector) {
+  clientId: copilotConnectorSp!.id
+  resourceId: graphSp.id
+  consentType: 'AllPrincipals'
+  scope: 'openid offline_access'
+}
+
+output backendAppId string = backendAppUri.outputs.appId
+output backendScope string = '${backendAppUri.outputs.identifierUri}/${backendScopeName}'
+output tokenExchangeAppId string = tokenExchangeAppUri.outputs.appId
+output copilotConnectorAppId string = enableCopilotConnector ? copilotConnectorApp!.appId : ''
+output copilotConnectorRedirectUri string = teamsOAuthRedirectUri

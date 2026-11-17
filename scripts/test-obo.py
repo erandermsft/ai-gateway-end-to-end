@@ -6,31 +6,32 @@ Microsoft 365 Copilot connector sends), lists tools through the gateway MCP endp
 whoami, and verifies the backend received *your* identity in a token issued to the token
 exchange app for the backend audience. Standard library only.
 
-Usage: python3 scripts/test-obo.py   (run after `terraform -chdir=infra apply`)
+Usage: python3 scripts/test-obo.py   (run after the Bicep deployment; DEPLOYMENT_NAME defaults to aigw-obo)
 """
 
 from __future__ import annotations
 
 import base64
 import json
+import os
 import subprocess
 import sys
 import urllib.error
 import urllib.request
-from pathlib import Path
 from typing import Any
 
 GATEWAY_SCOPE = "https://ai.gateway.azure.com/Data.All"
 PROTOCOL_VERSION = "2025-11-25"  # the version Microsoft 365 Copilot proposes
-INFRA_DIR = Path(__file__).resolve().parent.parent / "infra"
+DEPLOYMENT_NAME = os.environ.get("DEPLOYMENT_NAME", "aigw-obo")
 
 
 def run(*cmd: str) -> str:
     return subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
 
 
-def terraform_outputs() -> dict[str, Any]:
-    raw = json.loads(run("terraform", f"-chdir={INFRA_DIR}", "output", "-json"))
+def deployment_outputs() -> dict[str, Any]:
+    raw = json.loads(run("az", "deployment", "sub", "show", "--name", DEPLOYMENT_NAME,
+                         "--query", "properties.outputs", "-o", "json"))
     return {name: item["value"] for name, item in raw.items()}
 
 
@@ -106,8 +107,8 @@ def tool_result(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def main() -> int:
-    outputs = terraform_outputs()
-    gateway_url = outputs["mcp_endpoint_url"]
+    outputs = deployment_outputs()
+    gateway_url = outputs["mcpEndpointUrl"]
     print(f"Gateway MCP endpoint: {gateway_url}")
 
     status, headers = http_status(gateway_url, None)
@@ -139,16 +140,16 @@ def main() -> int:
     who = tool_result(client.request("tools/call", {"name": whoami_tool, "arguments": {}}))
     print(f"[5] {whoami_tool} ->\n{json.dumps(who, indent=2)}")
 
-    backend_status, _ = http_status(outputs["mcp_backend_url"], token)
+    backend_status, _ = http_status(outputs["mcpBackendUrl"], token)
     print(f"\n[6] Gateway token sent straight to the backend -> HTTP {backend_status}")
 
     me = run("az", "ad", "signed-in-user", "show", "--query", "id", "-o", "tsv")
     checks = {
         "anonymous gateway call is rejected (401)": status == 401,
         "backend saw the signed-in user (oid)": who.get("object_id") == me,
-        "backend token audience is the backend app": who.get("audience") == outputs["backend_app_client_id"],
-        "backend token was requested by the token exchange app (azp)": who.get("client_app_id") == outputs["token_exchange_app_client_id"],
-        "backend token carries the delegated scope": outputs["backend_scope"].rsplit("/", 1)[-1] in str(who.get("scopes", "")).split(),
+        "backend token audience is the backend app": who.get("audience") == outputs["backendAppClientId"],
+        "backend token was requested by the token exchange app (azp)": who.get("client_app_id") == outputs["tokenExchangeAppClientId"],
+        "backend token carries the delegated scope": outputs["backendScope"].rsplit("/", 1)[-1] in str(who.get("scopes", "")).split(),
         "backend rejects tokens that bypass the gateway": backend_status == 401,
     }
     print()

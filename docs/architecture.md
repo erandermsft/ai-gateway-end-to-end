@@ -10,8 +10,9 @@ exchange app with its user-assigned managed identity (workload identity federati
 ![Architecture: Microsoft 365 Copilot and Copilot Cowork call Azure AI Gateway, which exchanges the user token On-Behalf-Of through the token exchange app and calls the MCP server on Azure Container Apps](diagrams/architecture.svg)
 
 Numbered arrows 1–7 are the runtime path of a tool call. Teal arrows inside Microsoft Entra ID
-are the consent and pre-authorization chain, and dashed arrows are trust relationships. Terraform
-creates all of it except the one-time connector setup in Microsoft 365.
+are the consent and pre-authorization chain, and dashed arrows are trust relationships. One Bicep
+deployment creates all of it, the Entra objects through the Microsoft Graph Bicep extension, except
+the Copilot connector's client secret and the one-time connector setup in Microsoft 365.
 
 ## 2. One tool call, step by step
 
@@ -40,11 +41,12 @@ required configuration: the gateway's first-party app must be pre-authorized for
 | App A delegated `Data.All` + admin consent | Users get consent prompts, or a "needs admin approval" block, in Copilot. |
 | Runtime role **AI Gateway Tools User** | Gateway returns 403. Owner and Contributor do not grant tool invocation. |
 | Pre-authorization of `18550318-…` on App B | The gateway can't obtain T1', so OBO fails. |
+| App B identifier URI `api://<appId>` | The gateway can't address the token exchange app: tool calls fail with 502 and never reach the backend. |
 | Federated credential (subject = MI **principal** ID) | App B can't authenticate; OBO fails. |
 | Toolserver `appCredential.clientId` = MI **client** ID | The gateway picks the wrong identity. |
 | App B → App C admin consent | OBO fails with a consent error (`AADSTS65001`), and the gateway returns 401. |
 | Explicit backend scope (not `/.default`) | The gateway rejects the configuration. |
-| App C `requested_access_token_version = 2` | T2 is a v1 token (`sts.windows.net` issuer, `api://` audience), so the backend rejects it. |
+| App C `api.requestedAccessTokenVersion: 2` | T2 is a v1 token (`sts.windows.net` issuer, `api://` audience), so the backend rejects it. |
 | Container Apps Easy Auth with App C | Invalid tokens would reach the container, leaving the in-code checks as the only gate. |
 | Backend `azp` allow-list (Easy Auth `allowedApplications` + code) | Any app with a consented token for App C could call the backend directly. |
 | Gateway MCP versions ⊆ backend versions | M365 Copilot proposes `2025-11-25`; mismatches show up as 502 or `-32603` on `tools/list`. |
@@ -52,6 +54,6 @@ required configuration: the gateway's first-party app must be pre-authorized for
 ## Editing the diagrams
 
 The `.excalidraw` files in [`diagrams/`](diagrams/) are the editable sources, with the official
-Azure, Microsoft Entra, Microsoft 365, MCP, and Terraform icons embedded. Open them in Excalidraw
+Azure, Microsoft Entra, Microsoft 365, MCP, and Bicep icons embedded. Open them in Excalidraw
 (Microsoft employees: <https://aka.ms/excalidraw>, then **Open**), edit, and re-export SVG and PNG
 at 2× with the background on.
