@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and adjust.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+location        = "swedencentral"
+name_prefix     = "aigwobo"
+
+# Extra users or groups (object IDs) allowed to call the MCP server through the gateway,
+# e.g. the group of people who use the Copilot connector.
+# runtime_access_principal_ids = ["11111111-1111-1111-1111-111111111111"]
+
+# Only needed when ACR Tasks is unavailable and the local Docker build can't reach PyPI.
+# local_build_pypi_index_url = "https://my-pypi-mirror.example.com/simple"
