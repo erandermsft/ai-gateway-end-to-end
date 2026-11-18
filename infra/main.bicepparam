@@ -11,4 +11,4 @@ param namePrefix = 'aigwobo'
 // param copilotStudioRedirectUris = ['https://global.consent.azure-apim.net/redirect/<generated>']
 
 // Build the MCP server image from your fork or branch instead.
-param mcpServerSource = 'https://github.com/erandermsft/ai-gateway-end-to-end.git#main:mcp-server'
+// param mcpServerSource = 'https://github.com/<you>/ai-gateway-end-to-end.git#main:mcp-server'
